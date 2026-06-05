@@ -1,2 +1,4 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+# Force Jupyter Notebooks to be excluded from language stats
+notebooks/* linguist-documentation=true
