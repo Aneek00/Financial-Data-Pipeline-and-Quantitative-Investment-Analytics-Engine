@@ -182,6 +182,7 @@ cython_debug/
 
 # --- Custom Data & App Files ---
 *.parquet
+!clean_nav_data.parquet
 *.csv
 *.db
 .DS_Store
