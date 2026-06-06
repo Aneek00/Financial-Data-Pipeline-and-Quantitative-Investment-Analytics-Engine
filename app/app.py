@@ -119,7 +119,6 @@ with tab1:
 with tab2:
     st.subheader("1-Year Machine Learning NAV Forecast")
 
-    # Load the pre-computed predictions
     forecast_df = load_forecasts()
     available_funds = sorted(forecast_df["scheme_name"].unique())
 
@@ -129,23 +128,24 @@ with tab2:
         key="forecast_fund"
     )
 
-    # We don't even need a button anymore. It's instant!
+    # 1. Get History (Force pure Dates, eliminate time/timezones)
+    hist = df[df["scheme_name"] == selected_fund_forecast].copy()
+    hist["Date"] = pd.to_datetime(hist["date"]).dt.normalize()
+    hist = hist.drop_duplicates(subset=["Date"], keep="last")
+    hist_series = hist.set_index("Date")["nav"].rename("Historical NAV")
 
-    # 1. Clean Historical Data
-    history = df[df["scheme_name"] == selected_fund_forecast][["date", "nav"]].copy()
-    # Strip timezones and drop duplicates to prevent Streamlit indexing crashes
-    history["date"] = pd.to_datetime(history["date"]).dt.tz_localize(None)
-    history = history.sort_values("date").drop_duplicates("date", keep="last")
-    history = history.rename(columns={"date": "Date", "nav": "Historical NAV"}).set_index("Date")
+    # 2. Get Forecast (Force pure Dates)
+    fut = forecast_df[forecast_df["scheme_name"] == selected_fund_forecast].copy()
+    fut["Date"] = pd.to_datetime(fut["ds"]).dt.normalize()
+    fut = fut.drop_duplicates(subset=["Date"], keep="last")
+    fut_series = fut.set_index("Date")["yhat"].rename("Predicted NAV")
 
-    # 2. Clean Predicted Data
-    future = forecast_df[forecast_df["scheme_name"] == selected_fund_forecast].copy()
-    future["ds"] = pd.to_datetime(future["ds"]).dt.tz_localize(None)
-    future = future.sort_values("ds").drop_duplicates("ds", keep="last")
-    future = future.rename(columns={"ds": "Date", "yhat": "Predicted NAV"}).set_index("Date")
+    # 3. Safe Merge: Concat forces clean alignment
+    combined_chart_data = pd.concat([hist_series, fut_series], axis=1)
 
-    # 3. Merge and Draw
-    combined_chart_data = history.join(future, how="outer")
+    # 4. Final safety check: Kill any lingering duplicate indices
+    combined_chart_data = combined_chart_data[~combined_chart_data.index.duplicated(keep="last")]
+    combined_chart_data.sort_index(inplace=True)
 
     st.line_chart(combined_chart_data)
 # ==========================================
