@@ -10,7 +10,6 @@ pandera>=0.6.0
 tqdm
 pyarrow>=6.0.0
 # For the forecasting notebook
-prophet
 statsmodels
 # For database connection
 pymysql
