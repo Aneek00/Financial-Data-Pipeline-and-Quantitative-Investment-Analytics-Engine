@@ -1,14 +1,12 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from prophet import Prophet
-import matplotlib.pyplot as plt
 from datetime import timedelta
 import warnings
-import gc # IMPORTING GARBAGE COLLECTOR
+import gc
 
-# NO MORE sys.path HACKS! We import natively.
 from src.recommendations import categorize_funds, build_diversified_portfolio, calculate_suitability_score
+from src.analysis import precompute_fund_stats
 from src.models import run_strategy_backtest
 
 warnings.filterwarnings("ignore")
