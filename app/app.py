@@ -4,34 +4,33 @@ import warnings
 import plotly.graph_objects as go
 import sys
 import os
+import gc
 
 # 🚨 THE PATH RESCUE 🚨
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if root_dir not in sys.path:
     sys.path.append(root_dir)
 
-# Safely import the math functions
 from src.recommendations import categorize_funds, build_diversified_portfolio, calculate_suitability_score
 
 warnings.filterwarnings("ignore")
 
-# (Only call this ONCE)
 st.set_page_config(page_title="MF Quant Engine", layout="wide")
 
 # ==========================================
-# SIDEBAR: The Architecture Flex
+# SIDEBAR
 # ==========================================
 with st.sidebar:
     st.header("⚙️ System Architecture")
     st.markdown("""
     **Compute Layer (Offline / Air-Gapped):**
     * Multi-threaded AMFI API extraction.
-    * Facebook Prophet ML models & Dual-Factor Backtesting.
+    * Facebook Prophet ML models & Dual-Factor Backtests.
     * Agglomerative Hierarchical Clustering.
 
     **Presentation Layer (Cloud):**
     * Decoupled, lightweight Streamlit UI.
-    * Sub-second latency via pre-computed, Brotli-compressed Parquet matrices.
+    * Fragmented UI rendering for sub-second latency.
     """)
     st.markdown("---")
     st.markdown("*Built for institutional-grade quantitative research.*")
@@ -39,7 +38,7 @@ with st.sidebar:
 st.title("Mutual Fund Quant & Forecasting Engine")
 
 # ==========================================
-# CACHE & DATA LOADING (Strictly Read-Only)
+# CACHE & DATA LOADING
 # ==========================================
 @st.cache_data(ttl=86400)
 def load_data():
@@ -83,9 +82,10 @@ funds_list = sorted(df["scheme_name"].unique())
 tab1, tab2, tab3 = st.tabs(["Smart Portfolio", "Prophet ML Forecast", "Strategy Backtest"])
 
 # ==========================================
-# TAB 1: RECOMMENDATIONS & PORTFOLIO
+# FRAGMENT 1: RECOMMENDATIONS
 # ==========================================
-with tab1:
+@st.fragment
+def render_tab1():
     st.subheader("Fund Recommendations & Smart Portfolio")
 
     col1, col2 = st.columns(2)
@@ -108,11 +108,11 @@ with tab1:
     core_funds, specialized_funds = categorize_funds(recs)
 
     st.markdown("### Top 15 Core Diversified Funds")
-    st.dataframe(core_funds[display_cols].head(15), use_container_width=True)
+    st.dataframe(core_funds[display_cols].head(15), width="stretch") # FIX FOR WARNINGS
 
     if not specialized_funds.empty:
         st.markdown("### Top 5 Specialized & Thematic Funds")
-        st.dataframe(specialized_funds[display_cols].head(5), use_container_width=True)
+        st.dataframe(specialized_funds[display_cols].head(5), width="stretch") # FIX FOR WARNINGS
 
     st.markdown("---")
     st.markdown("### 🛡️ Build Your Smart Diversified Portfolio")
@@ -136,12 +136,15 @@ with tab1:
             )
 
             st.success(f"Generated low-correlation portfolio anchored around {selected_anchor}!")
-            st.dataframe(final_portfolio[display_cols], use_container_width=True)
+            st.dataframe(final_portfolio[display_cols], width="stretch") # FIX FOR WARNINGS
+
+            gc.collect()
 
 # ==========================================
-# TAB 2: PROPHET FORECAST (Plotly)
+# FRAGMENT 2: FORECASTS
 # ==========================================
-with tab2:
+@st.fragment
+def render_tab2():
     st.subheader("1-Year Machine Learning NAV Forecast")
 
     try:
@@ -169,21 +172,23 @@ with tab2:
         fig.add_trace(go.Scatter(x=fut_series.index, y=fut_series.values, mode='lines', name='Predicted NAV', line=dict(color='#ff2b2b', dash='dot')))
 
         fig.update_layout(
-            title="NAV Projection",
-            xaxis_title="Date",
-            yaxis_title="Net Asset Value",
-            hovermode="x unified",
-            margin=dict(l=0, r=0, t=40, b=0)
+            title="NAV Projection", xaxis_title="Date", yaxis_title="Net Asset Value",
+            hovermode="x unified", margin=dict(l=0, r=0, t=40, b=0)
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch") # FIX FOR WARNINGS
+
+        # Kill Plotly object from memory immediately after drawing
+        del fig, hist, fut
+        gc.collect()
 
     except FileNotFoundError:
         st.warning("Forecasts missing. Run generate_forecasts.py locally to generate them.")
 
 # ==========================================
-# TAB 3: STRATEGY BACKTEST (Plotly)
+# FRAGMENT 3: BACKTESTS
 # ==========================================
-with tab3:
+@st.fragment
+def render_tab3():
     st.subheader("Uncompromised Strategy Backtest (Prophet ML + EMA)")
 
     try:
@@ -213,14 +218,24 @@ with tab3:
         fig2.add_trace(go.Scatter(x=chart_data.index, y=chart_data["Prophet Strategy"], mode='lines', name='Prophet AI Strategy', line=dict(color='#00ff88', width=2)))
 
         fig2.update_layout(
-            title="Cumulative Strategy Returns",
-            xaxis_title="Date",
-            yaxis_title="Return (%)",
-            yaxis_tickformat='.1%',
-            hovermode="x unified",
-            margin=dict(l=0, r=0, t=40, b=0)
+            title="Cumulative Strategy Returns", xaxis_title="Date", yaxis_title="Return (%)",
+            yaxis_tickformat='.1%', hovermode="x unified", margin=dict(l=0, r=0, t=40, b=0)
         )
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width="stretch") # FIX FOR WARNINGS
+
+        # Kill Plotly object from memory immediately after drawing
+        del fig2, chart_data
+        gc.collect()
 
     except FileNotFoundError:
         st.warning("Backtest metrics missing. Run generate_backtests.py locally to generate them.")
+
+# ==========================================
+# RENDER THE TABS
+# ==========================================
+with tab1:
+    render_tab1()
+with tab2:
+    render_tab2()
+with tab3:
+    render_tab3()
