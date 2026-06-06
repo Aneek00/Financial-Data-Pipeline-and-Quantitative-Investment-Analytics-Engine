@@ -132,15 +132,21 @@ with tab2:
     )
 
     # We don't even need a button anymore. It's instant!
-    # Get historical data for the chart
+
+    # 1. Clean Historical Data
     history = df[df["scheme_name"] == selected_fund_forecast][["date", "nav"]].copy()
+    # Strip timezones and drop duplicates to prevent Streamlit indexing crashes
+    history["date"] = pd.to_datetime(history["date"]).dt.tz_localize(None)
+    history = history.sort_values("date").drop_duplicates("date", keep="last")
     history = history.rename(columns={"date": "Date", "nav": "Historical NAV"}).set_index("Date")
 
-    # Get predicted data for the chart
+    # 2. Clean Predicted Data
     future = forecast_df[forecast_df["scheme_name"] == selected_fund_forecast].copy()
+    future["ds"] = pd.to_datetime(future["ds"]).dt.tz_localize(None)
+    future = future.sort_values("ds").drop_duplicates("ds", keep="last")
     future = future.rename(columns={"ds": "Date", "yhat": "Predicted NAV"}).set_index("Date")
 
-    # Merge them together so Streamlit can draw a beautiful chart
+    # 3. Merge and Draw
     combined_chart_data = history.join(future, how="outer")
 
     st.line_chart(combined_chart_data)
