@@ -4,6 +4,7 @@ import logging
 from prophet import Prophet
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 from datetime import timedelta
+import gc
 
 # Silence Prophet logs in production
 logging.getLogger('cmdstanpy').setLevel(logging.ERROR)
@@ -28,18 +29,22 @@ def generate_ensemble_forecast(fund_df: pd.DataFrame, periods: int = 365) -> pd.
     ).fit()
     forecast_hw = model_hw.forecast(periods)
 
-    # 3. Ensemble Blending
+# 3. Ensemble Blending
     prophet_future = forecast_prophet[-periods:]['yhat'].values
     ensemble_values = (prophet_future + forecast_hw.values) / 2
     forecast_dates = pd.date_range(start=fund_df['date'].iloc[-1], periods=periods + 1)[1:]
 
-    return pd.DataFrame({
+    final_df = pd.DataFrame({
         'date': forecast_dates,
         'prophet_forecast': prophet_future,
         'hw_forecast': forecast_hw.values,
         'ensemble_forecast': ensemble_values
     })
 
+    # Clean the memory BEFORE you hit the exit door!
+    gc.collect()
+
+    return final_df
 def get_max_drawdown(returns_series: pd.Series) -> float:
     """Calculates the maximum drawdown of a returns series."""
     cum_returns = (1 + returns_series).cumprod()

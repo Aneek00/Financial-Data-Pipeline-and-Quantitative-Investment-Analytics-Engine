@@ -5,6 +5,7 @@ from prophet import Prophet
 import matplotlib.pyplot as plt
 from datetime import timedelta
 import warnings
+import gc # IMPORTING GARBAGE COLLECTOR
 
 # NO MORE sys.path HACKS! We import natively.
 from src.recommendations import categorize_funds, build_diversified_portfolio, calculate_suitability_score
@@ -16,7 +17,7 @@ warnings.filterwarnings("ignore")
 st.set_page_config(page_title="MF Quant Engine", layout="wide")
 st.title("Mutual Fund Quant & Forecasting")
 
-# Added 24-hour TTL to prevent stale data memory leaks
+# 1. Cache Data Loading
 @st.cache_data(ttl=86400)
 def load_data():
     try:
@@ -27,13 +28,18 @@ def load_data():
         st.error("Data file missing. Run the local pipeline and shrink_data.py first.")
         st.stop()
 
-# Caching the heavy correlation matrix to prevent lag on dropdown changes
+# 2. Cache Correlation Matrix
 @st.cache_data(ttl=86400)
 def get_correlation_matrix(data: pd.DataFrame, top_funds: list) -> pd.DataFrame:
     returns_pivot = data[data['scheme_name'].isin(top_funds)].pivot_table(
         index='date', columns='scheme_name', values='nav'
     ).pct_change().dropna()
     return returns_pivot.corr()
+
+# 3. NEW: Cache the heavy math computation so sliders don't crash the app
+@st.cache_data(ttl=86400)
+def get_master_stats(data: pd.DataFrame) -> pd.DataFrame:
+    return precompute_fund_stats(data)
 
 df = load_data()
 funds_list = sorted(df["scheme_name"].unique())
@@ -46,7 +52,8 @@ tab1, tab2, tab3 = st.tabs(["Recommendations", "Prophet Forecast", "Strategy Bac
 with tab1:
     st.subheader("Fund Recommendations & Smart Portfolio")
 
-    master_stats_df = precompute_fund_stats(df)
+    # Now using the cached version!
+    master_stats_df = get_master_stats(df)
 
     col1, col2 = st.columns(2)
     with col1:
@@ -114,7 +121,6 @@ with tab2:
         else:
             with st.spinner("Training model..."):
                 prophet_df = fund_df.rename(columns={"date": "ds", "nav": "y"})
-                # Removed daily/weekly seasonality per quant feedback
                 m = Prophet(daily_seasonality=False, weekly_seasonality=False, yearly_seasonality=True)
                 m.fit(prophet_df)
 
@@ -124,6 +130,12 @@ with tab2:
                 fig = m.plot(forecast, xlabel="Date", ylabel="NAV")
                 plt.title(selected_fund_forecast)
                 st.pyplot(fig)
+
+                # NEW: CRITICAL MEMORY CLEANUP
+                plt.close(fig) # Kills the Matplotlib leak
+                del m # Deletes the Prophet model
+                del forecast # Deletes the heavy dataframe
+                gc.collect() # Forces Python to empty the trash bin
 
 # ==========================================
 # TAB 3: STRATEGY BACKTEST
@@ -152,3 +164,6 @@ with tab3:
                 col4.metric("Sharpe Ratio", f"{results['Sharpe_Ratio']:.2f}")
 
                 st.line_chart(results["TestData"].set_index("date")[["bench_cum", "strat_cum"]])
+
+            # Clean up memory after backtest finishes
+            gc.collect()
