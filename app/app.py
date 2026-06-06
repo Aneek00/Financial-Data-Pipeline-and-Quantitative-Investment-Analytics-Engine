@@ -1,7 +1,21 @@
 import streamlit as st
 import pandas as pd
 import warnings
+import sys
+import os
 
+# 🚨 THE PATH RESCUE 🚨
+# Tell Python exactly where to find the 'src' folder since we aren't using a package installer
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if root_dir not in sys.path:
+    sys.path.append(root_dir)
+
+# Now it can safely find the math functions!
+from src.recommendations import categorize_funds, build_diversified_portfolio, calculate_suitability_score
+
+warnings.filterwarnings("ignore")
+
+st.set_page_config(page_title="MF Quant Engine", layout="wide")
 # We only import the lightweight UI functions now.
 from src.recommendations import categorize_funds, build_diversified_portfolio, calculate_suitability_score
 
