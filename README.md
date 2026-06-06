@@ -72,6 +72,62 @@ flowchart TD
 ```
 
 ---
+## Repository Execution Architecture
+
+While the repository contains several exploratory notebooks, the production system does **not** depend on them during runtime.
+
+The notebooks are retained for:
+
+* Research reproducibility
+* Model experimentation
+* Statistical validation
+* Forecasting comparisons
+* Backtesting verification
+
+The deployed application exclusively relies on the modular Python package and generated artifacts.
+
+### Runtime Dependency Graph
+
+```mermaid
+flowchart LR
+
+    A[scripts/run_local_pipeline.py]
+
+    A --> B[src/data_ingestion]
+    A --> C[src/data_validation]
+    A --> D[src/database]
+    A --> E[src/analytics]
+    A --> F[src/forecasting]
+
+    B --> G[(MySQL)]
+    C --> G
+    D --> G
+
+    G --> E
+    E --> F
+
+    F --> H[(clean_nav_data.parquet)]
+
+    H --> I[Streamlit App]
+    I --> J[End User]
+
+    K[notebooks/] -. Reproducibility Only .-> E
+    K -. Research Only .-> F
+
+```
+
+### Separation of Concerns
+
+| Component    | Production Runtime | Purpose                    |
+| ------------ | ------------------ | -------------------------- |
+| `src/`       | Yes                | Core business logic        |
+| `scripts/`   | Yes                | Pipeline orchestration     |
+| `app/`       | Yes                | Streamlit dashboard        |
+| `data/`      | Yes                | Generated artifacts        |
+| `notebooks/` | No                 | Research & reproducibility |
+| `reports/`   | Optional           | Analytical exports         |
+
+This separation ensures experimental research does not introduce dependencies into the production inference pipeline.
 
 # Quantitative Backtesting Performance
 
@@ -144,6 +200,73 @@ Where:
 | Annualized Sharpe Ratio | 1.85                 |
 
 ---
+# Statistical Characteristics of the Dataset
+
+Before forecasting and portfolio construction, the system performs exploratory statistical analysis on the historical NAV universe.
+
+### Return Distribution Analysis
+
+Daily log returns are computed as:
+
+```math
+r_t = \ln\left(\frac{NAV_t}{NAV_{t-1}}\right)
+```
+
+This transformation:
+
+* Stabilizes variance
+* Enables additive return aggregation
+* Improves comparability across funds
+
+### Volatility Estimation
+
+Annualized volatility is calculated using:
+
+```math
+\sigma_{annual} = \sigma_{daily}\sqrt{252}
+```
+
+allowing risk comparison across funds operating on identical trading calendars.
+
+### Correlation Structure
+
+The diversification engine constructs an NxN correlation matrix:
+
+```math
+\rho_{ij}
+=
+\frac{Cov(r_i,r_j)}
+{\sigma_i\sigma_j}
+```
+
+This matrix serves as the foundation for clustering and portfolio diversification.
+
+### Cross-Sectional Screening
+
+For every rebalance cycle, the engine ranks funds across multiple dimensions:
+
+* CAGR
+* Volatility
+* Sharpe Ratio
+* Forecasted Growth
+* Correlation Contribution
+
+This creates a multi-factor screening framework instead of relying on a single performance metric.
+
+### Survivorship Bias Mitigation
+
+Historical observations are retained regardless of recent performance whenever data availability permits, reducing distortions caused by analyzing only currently surviving top-performing funds.
+
+### Statistical Assumptions
+
+The analytical layer assumes:
+
+* Stationarity of short-horizon return distributions
+* Independence of daily residuals for risk estimation
+* Stable correlation structures within rolling windows
+
+These assumptions are monitored through rolling statistical diagnostics before model outputs are incorporated into portfolio recommendations.
+
 
 # Forecasting Methodology
 
@@ -182,6 +305,47 @@ Portfolio generation process:
 5. Produce a diversified portfolio with minimized concentration risk.
 
 ---
+# Engineering Design Principles
+
+The system was designed around quantitative research reproducibility rather than dashboard development alone.
+
+### Deterministic Processing
+
+Identical inputs produce identical analytical outputs, ensuring reproducible research and debugging.
+
+### Artifact-Driven Deployment
+
+The deployed Streamlit application consumes pre-computed artifacts rather than retraining models during user interaction.
+
+Benefits include:
+
+* Lower latency
+* Reduced memory footprint
+* Consistent recommendations
+* Lower cloud compute costs
+
+### Fail-Fast Validation
+
+Data quality checks occur before any persistence or statistical computation.
+
+Examples include:
+
+* Missing scheme identifiers
+* Invalid NAV observations
+* Duplicate timestamps
+* Schema violations
+
+### Computational Efficiency
+
+Heavy analytical operations are executed offline:
+
+* Forecast generation
+* Clustering
+* Correlation matrices
+* Risk metric computation
+
+This allows the frontend to behave as a lightweight inference layer rather than a full analytical engine.
+
 
 # Reproducibility & Setup
 
