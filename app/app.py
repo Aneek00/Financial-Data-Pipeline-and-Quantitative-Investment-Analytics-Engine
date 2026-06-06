@@ -1,60 +1,71 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-from datetime import timedelta
 import warnings
-import gc
 
+# We only import the lightweight UI functions now.
 from src.recommendations import categorize_funds, build_diversified_portfolio, calculate_suitability_score
-from src.analysis import precompute_fund_stats
-from src.models import run_strategy_backtest
 
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="MF Quant Engine", layout="wide")
-st.title("Mutual Fund Quant & Forecasting")
 
-# 1. Cache Data Loading
+# ==========================================
+# SIDEBAR: The Architecture Flex
+# ==========================================
+with st.sidebar:
+    st.header("⚙️ System Architecture")
+    st.markdown("""
+    **Compute Layer (Offline / Air-Gapped):**
+    * Multi-threaded AMFI API extraction.
+    * Facebook Prophet ML models & Dual-Factor Backtesting.
+    * Agglomerative Hierarchical Clustering.
+
+    **Presentation Layer (Cloud):**
+    * Decoupled, lightweight Streamlit UI.
+    * Sub-second latency via pre-computed, Brotli-compressed Parquet matrices.
+    """)
+    st.markdown("---")
+    st.markdown("*Built for institutional-grade quantitative research.*")
+
+st.title("Mutual Fund Quant & Forecasting Engine")
+
+# ==========================================
+# CACHE & DATA LOADING (Strictly Read-Only)
+# ==========================================
 @st.cache_data(ttl=86400)
 def load_data():
-    try:
-        df = pd.read_parquet("clean_nav_data.parquet")
-        df["date"] = pd.to_datetime(df["date"])
-        return df
-    except FileNotFoundError:
-        st.error("Data file missing. Run the local pipeline and shrink_data.py first.")
-        st.stop()
+    df = pd.read_parquet("clean_nav_data.parquet")
+    df["date"] = pd.to_datetime(df["date"])
+    return df
 
-# 2. Cache Correlation Matrix
-@st.cache_data(ttl=86400)
-def get_correlation_matrix(data: pd.DataFrame, top_funds: list) -> pd.DataFrame:
-    returns_pivot = data[data['scheme_name'].isin(top_funds)].pivot_table(
-        index='date', columns='scheme_name', values='nav'
-    ).pct_change().dropna()
-    return returns_pivot.corr()
-
-# 3. Load Pre-Computed Math (ZERO Cloud Compute required!)
 @st.cache_data(ttl=86400)
 def load_master_stats():
-    try:
-        return pd.read_parquet("master_stats.parquet")
-    except FileNotFoundError:
-        st.error("master_stats.parquet missing. Run shrink_data.py locally.")
-        st.stop()
+    return pd.read_parquet("master_stats.parquet")
 
-# 4. Load Pre-Computed ML Forecasts
+@st.cache_data(ttl=86400)
+def load_correlation_matrix():
+    return pd.read_parquet("correlation_matrix.parquet")
+
 @st.cache_data(ttl=86400)
 def load_forecasts():
-    try:
-        return pd.read_parquet("precomputed_forecasts.parquet")
-    except FileNotFoundError:
-        st.error("precomputed_forecasts.parquet missing. Run generate_forecasts.py locally.")
-        st.stop()
+    return pd.read_parquet("precomputed_forecasts.parquet")
 
-df = load_data()
+@st.cache_data(ttl=86400)
+def load_backtests():
+    metrics = pd.read_parquet("backtest_metrics.parquet")
+    charts = pd.read_parquet("backtest_charts.parquet")
+    return metrics, charts
+
+try:
+    df = load_data()
+    master_stats_df = load_master_stats()
+except FileNotFoundError:
+    st.error("Pre-computed data missing. Run the local backend scripts first.")
+    st.stop()
+
 funds_list = sorted(df["scheme_name"].unique())
 
-tab1, tab2, tab3 = st.tabs(["Recommendations", "Prophet Forecast", "Strategy Backtest"])
+tab1, tab2, tab3 = st.tabs(["Smart Portfolio", "Prophet ML Forecast", "Strategy Backtest"])
 
 # ==========================================
 # TAB 1: RECOMMENDATIONS & PORTFOLIO
@@ -62,7 +73,6 @@ tab1, tab2, tab3 = st.tabs(["Recommendations", "Prophet Forecast", "Strategy Bac
 with tab1:
     st.subheader("Fund Recommendations & Smart Portfolio")
 
-    master_stats_df = load_master_stats()
     col1, col2 = st.columns(2)
     with col1:
         horizon_years = st.slider("Investment Horizon (Years)", min_value=1, max_value=10, value=5)
@@ -96,8 +106,9 @@ with tab1:
     selected_anchor = st.selectbox("Choose your Anchor Fund:", top_fund_names)
 
     if selected_anchor:
-        with st.spinner("Calculating Correlation Matrix..."):
-            correlation_matrix = get_correlation_matrix(df, top_fund_names)
+        # Load the pre-computed matrix instead of freezing the server
+        try:
+            correlation_matrix = load_correlation_matrix()
 
             anchor_row = core_funds[core_funds['scheme_name'] == selected_anchor]
             other_candidates = core_funds[core_funds['scheme_name'] != selected_anchor]
@@ -112,69 +123,77 @@ with tab1:
 
             st.success(f"Generated low-correlation portfolio anchored around {selected_anchor}!")
             st.dataframe(final_portfolio[display_cols], use_container_width=True)
+        except FileNotFoundError:
+            st.warning("Correlation matrix missing. Please run shrink_data.py locally to generate it.")
 
 # ==========================================
-# TAB 2: PROPHET FORECAST
+# TAB 2: PROPHET FORECAST (Clean Chart Fix)
 # ==========================================
 with tab2:
     st.subheader("1-Year Machine Learning NAV Forecast")
 
-    forecast_df = load_forecasts()
-    available_funds = sorted(forecast_df["scheme_name"].unique())
+    try:
+        forecast_df = load_forecasts()
+        available_funds = sorted(forecast_df["scheme_name"].unique())
 
-    selected_fund_forecast = st.selectbox(
-        "Select a Top 50 Fund to view its forecast:",
-        available_funds,
-        key="forecast_fund"
-    )
+        selected_fund_forecast = st.selectbox(
+            "Select a Top 50 Fund to view its forecast:",
+            available_funds,
+            key="forecast_fund"
+        )
 
-    # 1. Get History (Force pure Dates, eliminate time/timezones)
-    hist = df[df["scheme_name"] == selected_fund_forecast].copy()
-    hist["Date"] = pd.to_datetime(hist["date"]).dt.normalize()
-    hist = hist.drop_duplicates(subset=["Date"], keep="last")
-    hist_series = hist.set_index("Date")["nav"].rename("Historical NAV")
+        # 1. Clean History
+        hist = df[df["scheme_name"] == selected_fund_forecast].copy()
+        hist["Date"] = pd.to_datetime(hist["date"]).dt.normalize()
+        hist = hist.drop_duplicates(subset=["Date"], keep="last")
+        hist_series = hist.set_index("Date")["nav"]
 
-    # 2. Get Forecast (Force pure Dates)
-    fut = forecast_df[forecast_df["scheme_name"] == selected_fund_forecast].copy()
-    fut["Date"] = pd.to_datetime(fut["ds"]).dt.normalize()
-    fut = fut.drop_duplicates(subset=["Date"], keep="last")
-    fut_series = fut.set_index("Date")["yhat"].rename("Predicted NAV")
+        # 2. Clean Forecast
+        fut = forecast_df[forecast_df["scheme_name"] == selected_fund_forecast].copy()
+        fut["Date"] = pd.to_datetime(fut["ds"]).dt.normalize()
+        fut = fut.drop_duplicates(subset=["Date"], keep="last")
+        fut_series = fut.set_index("Date")["yhat"]
 
-    # 3. Safe Merge: Concat forces clean alignment
-    combined_chart_data = pd.concat([hist_series, fut_series], axis=1)
+        # 3. Clean Merge for Beautiful Multi-line Chart
+        combined_chart_data = pd.DataFrame({
+            "Historical NAV": hist_series,
+            "Predicted NAV": fut_series
+        })
 
-    # 4. Final safety check: Kill any lingering duplicate indices
-    combined_chart_data = combined_chart_data[~combined_chart_data.index.duplicated(keep="last")]
-    combined_chart_data.sort_index(inplace=True)
+        st.line_chart(combined_chart_data)
+    except FileNotFoundError:
+        st.warning("Forecasts missing. Run generate_forecasts.py locally to generate them.")
 
-    st.line_chart(combined_chart_data)
 # ==========================================
-# TAB 3: STRATEGY BACKTEST
+# TAB 3: STRATEGY BACKTEST (Instant Load)
 # ==========================================
 with tab3:
-    st.subheader("Strategy Backtest (With Expense & Slippage)")
-    selected_fund_bt = st.selectbox("Select Fund", funds_list, key="bt_fund")
+    st.subheader("Uncompromised Strategy Backtest (Prophet ML + EMA)")
 
-    if st.button("Run Backtest"):
-        with st.spinner("Running institutional backtest..."):
-            fund_df = df[df["scheme_name"] == selected_fund_bt].copy()
-            fund_df = fund_df.sort_values("date").drop_duplicates("date", keep="last")
+    try:
+        bt_metrics, bt_charts = load_backtests()
+        available_bt_funds = sorted(bt_metrics["scheme_name"].unique())
 
-            results = run_strategy_backtest(fund_df)
+        selected_fund_bt = st.selectbox("Select a Top 50 Fund:", available_bt_funds, key="bt_fund")
 
-            if results is None:
-                st.error("Model failed to converge. Insufficient volatility or data points.")
-            else:
-                strat_return = results["Strategy_Ret"] * 100
-                bench_return = results["Benchmark_Ret"] * 100
+        # Get metrics
+        fund_metrics = bt_metrics[bt_metrics["scheme_name"] == selected_fund_bt].iloc[0]
 
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Strategy Return", f"{strat_return:.2f}%")
-                col2.metric("Buy & Hold Return", f"{bench_return:.2f}%")
-                col3.metric("MAPE (Error)", f"{results['MAPE']:.2f}%")
-                col4.metric("Sharpe Ratio", f"{results['Sharpe_Ratio']:.2f}")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Strategy Return", f"{fund_metrics['Strategy_Ret'] * 100:.2f}%")
+        col2.metric("Buy & Hold Return", f"{fund_metrics['Benchmark_Ret'] * 100:.2f}%")
+        col3.metric("MAPE (Error)", f"{fund_metrics['MAPE']:.2f}%")
+        col4.metric("Sharpe Ratio", f"{fund_metrics['Sharpe_Ratio']:.2f}")
 
-                st.line_chart(results["TestData"].set_index("date")[["bench_cum", "strat_cum"]])
+        # Clean Chart Data
+        chart_data = bt_charts[bt_charts["scheme_name"] == selected_fund_bt].copy()
+        chart_data["Date"] = pd.to_datetime(chart_data["date"]).dt.normalize()
+        chart_data = chart_data.drop_duplicates(subset=["Date"], keep="last").set_index("Date")
 
-            # Clean up memory after backtest finishes
-            gc.collect()
+        chart_data = chart_data[["bench_cum", "strat_cum"]].rename(
+            columns={"bench_cum": "Buy & Hold", "strat_cum": "Prophet Strategy"}
+        )
+
+        st.line_chart(chart_data)
+    except FileNotFoundError:
+        st.warning("Backtest metrics missing. Run generate_backtests.py locally to generate them.")
