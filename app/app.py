@@ -167,15 +167,36 @@ def render_tab2():
         fut = fut.drop_duplicates(subset=["Date"], keep="last")
         fut_series = fut.set_index("Date")["yhat"]
 
+        # --- THE CLASSIC PROPHET AESTHETIC ---
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=hist_series.index, y=hist_series.values, mode='lines', name='Historical NAV', line=dict(color='#29b5e8')))
-        fig.add_trace(go.Scatter(x=fut_series.index, y=fut_series.values, mode='lines', name='Predicted NAV', line=dict(color='#ff2b2b', dash='dot')))
+
+        # Actuals: Black Dots
+        fig.add_trace(go.Scatter(
+            x=hist_series.index, y=hist_series.values,
+            mode='markers', name='Actual NAV',
+            marker=dict(color='black', size=4)
+        ))
+
+        # Forecast: Solid Blue Line
+        fig.add_trace(go.Scatter(
+            x=fut_series.index, y=fut_series.values,
+            mode='lines', name='Predicted Trend',
+            line=dict(color='#0072B2', width=2)
+        ))
 
         fig.update_layout(
-            title="NAV Projection", xaxis_title="Date", yaxis_title="Net Asset Value",
-            hovermode="x unified", margin=dict(l=0, r=0, t=40, b=0)
+            title="NAV Projection",
+            xaxis_title="Date",
+            yaxis_title="Net Asset Value",
+            hovermode="x unified",
+            margin=dict(l=0, r=0, t=40, b=0),
+            plot_bgcolor='white',         # Force white background
+            paper_bgcolor='white',        # Force white outer background
+            font=dict(color='black'),     # Force black text
+            xaxis=dict(showgrid=True, gridcolor='#E5E5E5', linecolor='black'),
+            yaxis=dict(showgrid=True, gridcolor='#E5E5E5', linecolor='black')
         )
-        st.plotly_chart(fig, width="stretch") # FIX FOR WARNINGS
+        st.plotly_chart(fig, width="stretch")
 
         # Kill Plotly object from memory immediately after drawing
         del fig, hist, fut
