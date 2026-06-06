@@ -184,6 +184,7 @@ cython_debug/
 *.parquet
 !clean_nav_data.parquet
 !master_stats.parquet
+!precomputed_forecasts.parquet
 *.csv
 *.db
 .DS_Store

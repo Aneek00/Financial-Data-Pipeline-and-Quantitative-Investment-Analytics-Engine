@@ -44,6 +44,15 @@ def load_master_stats():
         st.error("master_stats.parquet missing. Run shrink_data.py locally.")
         st.stop()
 
+# 4. Load Pre-Computed ML Forecasts
+@st.cache_data(ttl=86400)
+def load_forecasts():
+    try:
+        return pd.read_parquet("precomputed_forecasts.parquet")
+    except FileNotFoundError:
+        st.error("precomputed_forecasts.parquet missing. Run generate_forecasts.py locally.")
+        st.stop()
+
 df = load_data()
 funds_list = sorted(df["scheme_name"].unique())
 
@@ -110,34 +119,31 @@ with tab1:
 # TAB 2: PROPHET FORECAST
 # ==========================================
 with tab2:
-    st.subheader("NAV Forecast")
-    selected_fund_forecast = st.selectbox("Select Fund", funds_list, key="forecast_fund")
+    st.subheader("1-Year Machine Learning NAV Forecast")
 
-    if st.button("Generate 1-Year Forecast"):
-        fund_df = df[df["scheme_name"] == selected_fund_forecast][["date", "nav"]].copy()
-        fund_df = fund_df.sort_values("date").drop_duplicates("date", keep="last")
+    # Load the pre-computed predictions
+    forecast_df = load_forecasts()
+    available_funds = sorted(forecast_df["scheme_name"].unique())
 
-        if len(fund_df) < 365:
-            st.warning("Need at least 365 days of history.")
-        else:
-            with st.spinner("Training model..."):
-                prophet_df = fund_df.rename(columns={"date": "ds", "nav": "y"})
-                m = Prophet(daily_seasonality=False, weekly_seasonality=False, yearly_seasonality=True)
-                m.fit(prophet_df)
+    selected_fund_forecast = st.selectbox(
+        "Select a Top 50 Fund to view its forecast:",
+        available_funds,
+        key="forecast_fund"
+    )
 
-                future = m.make_future_dataframe(periods=365)
-                forecast = m.predict(future)
+    # We don't even need a button anymore. It's instant!
+    # Get historical data for the chart
+    history = df[df["scheme_name"] == selected_fund_forecast][["date", "nav"]].copy()
+    history = history.rename(columns={"date": "Date", "nav": "Historical NAV"}).set_index("Date")
 
-                fig = m.plot(forecast, xlabel="Date", ylabel="NAV")
-                plt.title(selected_fund_forecast)
-                st.pyplot(fig)
+    # Get predicted data for the chart
+    future = forecast_df[forecast_df["scheme_name"] == selected_fund_forecast].copy()
+    future = future.rename(columns={"ds": "Date", "yhat": "Predicted NAV"}).set_index("Date")
 
-                # NEW: CRITICAL MEMORY CLEANUP
-                plt.close(fig) # Kills the Matplotlib leak
-                del m # Deletes the Prophet model
-                del forecast # Deletes the heavy dataframe
-                gc.collect() # Forces Python to empty the trash bin
+    # Merge them together so Streamlit can draw a beautiful chart
+    combined_chart_data = history.join(future, how="outer")
 
+    st.line_chart(combined_chart_data)
 # ==========================================
 # TAB 3: STRATEGY BACKTEST
 # ==========================================
