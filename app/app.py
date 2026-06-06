@@ -1,26 +1,21 @@
 import streamlit as st
 import pandas as pd
 import warnings
+import plotly.graph_objects as go
 import sys
 import os
 
 # 🚨 THE PATH RESCUE 🚨
-# Tell Python exactly where to find the 'src' folder since we aren't using a package installer
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if root_dir not in sys.path:
     sys.path.append(root_dir)
 
-# Now it can safely find the math functions!
+# Safely import the math functions
 from src.recommendations import categorize_funds, build_diversified_portfolio, calculate_suitability_score
 
 warnings.filterwarnings("ignore")
 
-st.set_page_config(page_title="MF Quant Engine", layout="wide")
-# We only import the lightweight UI functions now.
-from src.recommendations import categorize_funds, build_diversified_portfolio, calculate_suitability_score
-
-warnings.filterwarnings("ignore")
-
+# (Only call this ONCE)
 st.set_page_config(page_title="MF Quant Engine", layout="wide")
 
 # ==========================================
@@ -57,8 +52,14 @@ def load_master_stats():
     return pd.read_parquet("master_stats.parquet")
 
 @st.cache_data(ttl=86400)
-def load_correlation_matrix():
-    return pd.read_parquet("correlation_matrix.parquet")
+def get_correlation_matrix(df_clean: pd.DataFrame, top_funds: list) -> pd.DataFrame:
+    try:
+        return pd.read_parquet("correlation_matrix.parquet")
+    except FileNotFoundError:
+        returns_pivot = df_clean[df_clean['scheme_name'].isin(top_funds)].pivot_table(
+            index='date', columns='scheme_name', values='nav'
+        ).pct_change().dropna()
+        return returns_pivot.corr()
 
 @st.cache_data(ttl=86400)
 def load_forecasts():
@@ -120,9 +121,8 @@ with tab1:
     selected_anchor = st.selectbox("Choose your Anchor Fund:", top_fund_names)
 
     if selected_anchor:
-        # Load the pre-computed matrix instead of freezing the server
-        try:
-            correlation_matrix = load_correlation_matrix()
+        with st.spinner("Analyzing correlation matrix..."):
+            correlation_matrix = get_correlation_matrix(df, top_fund_names)
 
             anchor_row = core_funds[core_funds['scheme_name'] == selected_anchor]
             other_candidates = core_funds[core_funds['scheme_name'] != selected_anchor]
@@ -137,11 +137,9 @@ with tab1:
 
             st.success(f"Generated low-correlation portfolio anchored around {selected_anchor}!")
             st.dataframe(final_portfolio[display_cols], use_container_width=True)
-        except FileNotFoundError:
-            st.warning("Correlation matrix missing. Please run shrink_data.py locally to generate it.")
 
 # ==========================================
-# TAB 2: PROPHET FORECAST (Clean Chart Fix)
+# TAB 2: PROPHET FORECAST (Plotly)
 # ==========================================
 with tab2:
     st.subheader("1-Year Machine Learning NAV Forecast")
@@ -156,30 +154,34 @@ with tab2:
             key="forecast_fund"
         )
 
-        # 1. Clean History
         hist = df[df["scheme_name"] == selected_fund_forecast].copy()
         hist["Date"] = pd.to_datetime(hist["date"]).dt.normalize()
         hist = hist.drop_duplicates(subset=["Date"], keep="last")
         hist_series = hist.set_index("Date")["nav"]
 
-        # 2. Clean Forecast
         fut = forecast_df[forecast_df["scheme_name"] == selected_fund_forecast].copy()
         fut["Date"] = pd.to_datetime(fut["ds"]).dt.normalize()
         fut = fut.drop_duplicates(subset=["Date"], keep="last")
         fut_series = fut.set_index("Date")["yhat"]
 
-        # 3. Clean Merge for Beautiful Multi-line Chart
-        combined_chart_data = pd.DataFrame({
-            "Historical NAV": hist_series,
-            "Predicted NAV": fut_series
-        })
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=hist_series.index, y=hist_series.values, mode='lines', name='Historical NAV', line=dict(color='#29b5e8')))
+        fig.add_trace(go.Scatter(x=fut_series.index, y=fut_series.values, mode='lines', name='Predicted NAV', line=dict(color='#ff2b2b', dash='dot')))
 
-        st.line_chart(combined_chart_data)
+        fig.update_layout(
+            title="NAV Projection",
+            xaxis_title="Date",
+            yaxis_title="Net Asset Value",
+            hovermode="x unified",
+            margin=dict(l=0, r=0, t=40, b=0)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
     except FileNotFoundError:
         st.warning("Forecasts missing. Run generate_forecasts.py locally to generate them.")
 
 # ==========================================
-# TAB 3: STRATEGY BACKTEST (Instant Load)
+# TAB 3: STRATEGY BACKTEST (Plotly)
 # ==========================================
 with tab3:
     st.subheader("Uncompromised Strategy Backtest (Prophet ML + EMA)")
@@ -190,7 +192,6 @@ with tab3:
 
         selected_fund_bt = st.selectbox("Select a Top 50 Fund:", available_bt_funds, key="bt_fund")
 
-        # Get metrics
         fund_metrics = bt_metrics[bt_metrics["scheme_name"] == selected_fund_bt].iloc[0]
 
         col1, col2, col3, col4 = st.columns(4)
@@ -199,7 +200,6 @@ with tab3:
         col3.metric("MAPE (Error)", f"{fund_metrics['MAPE']:.2f}%")
         col4.metric("Sharpe Ratio", f"{fund_metrics['Sharpe_Ratio']:.2f}")
 
-        # Clean Chart Data
         chart_data = bt_charts[bt_charts["scheme_name"] == selected_fund_bt].copy()
         chart_data["Date"] = pd.to_datetime(chart_data["date"]).dt.normalize()
         chart_data = chart_data.drop_duplicates(subset=["Date"], keep="last").set_index("Date")
@@ -208,6 +208,19 @@ with tab3:
             columns={"bench_cum": "Buy & Hold", "strat_cum": "Prophet Strategy"}
         )
 
-        st.line_chart(chart_data)
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatter(x=chart_data.index, y=chart_data["Buy & Hold"], mode='lines', name='Buy & Hold Benchmark', line=dict(color='#a3a8b8')))
+        fig2.add_trace(go.Scatter(x=chart_data.index, y=chart_data["Prophet Strategy"], mode='lines', name='Prophet AI Strategy', line=dict(color='#00ff88', width=2)))
+
+        fig2.update_layout(
+            title="Cumulative Strategy Returns",
+            xaxis_title="Date",
+            yaxis_title="Return (%)",
+            yaxis_tickformat='.1%',
+            hovermode="x unified",
+            margin=dict(l=0, r=0, t=40, b=0)
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+
     except FileNotFoundError:
         st.warning("Backtest metrics missing. Run generate_backtests.py locally to generate them.")
