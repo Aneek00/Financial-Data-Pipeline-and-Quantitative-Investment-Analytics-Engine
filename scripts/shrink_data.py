@@ -1,6 +1,7 @@
 # scripts/shrink_data.py
 import pandas as pd
 from src.config import EXCLUDED_FUNDS_PATTERN
+from src.analysis import precompute_fund_stats
 
 def main():
     print("Loading heavy raw data...")
@@ -29,6 +30,14 @@ def main():
     print("Saving compressed parquet file for Streamlit...")
     df_clean.to_parquet("clean_nav_data.parquet", compression="brotli")
     print("Finished. Ready for app.py!")
+
+    print("Running heavy math: Pre-computing CAGR, Volatility, and Sharpe Ratios...")
+    # Use df_clean directly instead of re-reading from disk!
+    master_stats_df = precompute_fund_stats(df_clean)
+
+    # Save the results to a tiny, lightning-fast file
+    master_stats_df.to_parquet("master_stats.parquet")
+    print("✅ Successfully saved master_stats.parquet!")
 
 if __name__ == "__main__":
     main()

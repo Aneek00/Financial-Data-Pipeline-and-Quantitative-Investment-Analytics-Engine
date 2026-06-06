@@ -9,7 +9,6 @@ import gc # IMPORTING GARBAGE COLLECTOR
 
 # NO MORE sys.path HACKS! We import natively.
 from src.recommendations import categorize_funds, build_diversified_portfolio, calculate_suitability_score
-from src.analysis import precompute_fund_stats
 from src.models import run_strategy_backtest
 
 warnings.filterwarnings("ignore")
@@ -36,10 +35,14 @@ def get_correlation_matrix(data: pd.DataFrame, top_funds: list) -> pd.DataFrame:
     ).pct_change().dropna()
     return returns_pivot.corr()
 
-# 3. NEW: Cache the heavy math computation so sliders don't crash the app
+# 3. Load Pre-Computed Math (ZERO Cloud Compute required!)
 @st.cache_data(ttl=86400)
-def get_master_stats(data: pd.DataFrame) -> pd.DataFrame:
-    return precompute_fund_stats(data)
+def load_master_stats():
+    try:
+        return pd.read_parquet("master_stats.parquet")
+    except FileNotFoundError:
+        st.error("master_stats.parquet missing. Run shrink_data.py locally.")
+        st.stop()
 
 df = load_data()
 funds_list = sorted(df["scheme_name"].unique())
@@ -52,9 +55,7 @@ tab1, tab2, tab3 = st.tabs(["Recommendations", "Prophet Forecast", "Strategy Bac
 with tab1:
     st.subheader("Fund Recommendations & Smart Portfolio")
 
-    # Now using the cached version!
-    master_stats_df = get_master_stats(df)
-
+    master_stats_df = load_master_stats()
     col1, col2 = st.columns(2)
     with col1:
         horizon_years = st.slider("Investment Horizon (Years)", min_value=1, max_value=10, value=5)
