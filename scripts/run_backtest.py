@@ -1,6 +1,24 @@
 import pandas as pd
 import numpy as np
 from src.models import run_strategy_backtest
+from juliacall import Main as jl
+
+# 1. Load your Julia file into the Python environment
+jl.seval('include("src/compute.jl")')
+
+def run_julia_backtest(df):
+    # 2. Extract the NAV column as a raw NumPy array (Float64)
+    # Julia reads NumPy arrays natively with zero-copy overhead!
+    nav_array = df['nav'].to_numpy(dtype=np.float64)
+
+    # 3. Call the Julia function
+    # Note: We access it via jl.FastCompute (the module name we created in Julia)
+    signals = jl.FastCompute.calculate_ema_signals(nav_array, 20, 50)
+
+    # 4. Slap the fast results back into your Pandas DataFrame
+    df['Strategy_Signal'] = signals
+
+    return df
 
 def main():
     print("--- Running Standalone Production Backtest ---")

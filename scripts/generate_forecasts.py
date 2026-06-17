@@ -15,7 +15,12 @@ def main():
     df["date"] = pd.to_datetime(df["date"])
 
     # Grab the Top 50 funds with the most historical data
-    top_funds = df["scheme_name"].value_counts().head(50).index.tolist()
+    print("Filtering out Dividend/IDCW funds to protect Prophet math...")
+    valid_df = df[~df["scheme_name"].str.contains("IDCW|Dividend|Div", case=False, na=False)]
+
+    # Take ALL remaining valid public funds (Small Cap, Large Cap, Direct, Growth, etc.)
+    top_funds = valid_df["scheme_name"].unique().tolist()
+    print(f"Total valid funds to process: {len(top_funds)}")
 
     all_forecasts = []
 

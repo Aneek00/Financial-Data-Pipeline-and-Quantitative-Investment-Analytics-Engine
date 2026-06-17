@@ -8,10 +8,15 @@ def main():
     # Assuming this comes from your pipeline's output
     df = pd.read_parquet("final_nav_data.parquet")
 
-    # 1. Filter out the bad funds using our CENTRALIZED config regex!
+# 1. Filter out the bad funds using our CENTRALIZED config regex!
     unique_funds = pd.Series(df["scheme_name"].unique())
     valid_fund_names = unique_funds[
         ~unique_funds.str.contains(EXCLUDED_FUNDS_PATTERN, regex=True, na=False)
+    ]
+
+    # 🚨 NEW: Purge all Dividend/IDCW funds. Quant models require Growth funds!
+    valid_fund_names = valid_fund_names[
+        ~valid_fund_names.str.contains("IDCW|Dividend|Div", case=False, regex=True, na=False)
     ]
 
     # 2. Filter for mature funds only
