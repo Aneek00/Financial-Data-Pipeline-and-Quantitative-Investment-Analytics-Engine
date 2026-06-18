@@ -1,64 +1,60 @@
 # scripts/run_backtest.py
 import sys
 import os
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-# Force Python to recognize the root folder
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from sqlalchemy import create_engine
 from src.config import db_config
-from src.models import run_strategy_backtest
+from src.models import run_strategy_backtest, run_grid_search
 
 def main():
-    print("--- Running Production DB-Linked DOP Backtest ---")
+    print("--- Running Walk-Forward Optimization Pipeline ---")
 
-    # 1. Connect to your actual database using your config properties
     engine = create_engine(db_config.url)
-
-    # 2. Extract real historical data for an active scheme code
-    # We choose a single scheme code, sorting strictly by date chronologically
     query = "SELECT date, nav FROM nav_data WHERE scheme_code = '100033' ORDER BY date ASC"
 
-    try:
-        with engine.connect() as conn:
-            raw_df = pd.read_sql(query, conn)
-    except Exception as e:
-        print(f"[X] Database read failed: {e}")
-        print("[*] Falling back to a generalized table scan to grab the first valid scheme...")
-        fallback_query = "SELECT date, nav FROM nav_data WHERE scheme_code = (SELECT scheme_code FROM nav_data LIMIT 1) ORDER BY date ASC"
-        with engine.connect() as conn:
-            raw_df = pd.read_sql(fallback_query, conn)
+    with engine.connect() as conn:
+        raw_df = pd.read_sql(query, conn)
 
-    if raw_df.empty or len(raw_df) < 60:
-        print(f"[X] Error: Extracted series contains insufficient data history ({len(raw_df)} rows found).")
+    if raw_df.empty or len(raw_df) < 200:
+        print("[X] Insufficient historical data found.")
         return
 
-    print(f"[✓] Extracted {len(raw_df)} historical records from the database.")
+    # Stripping data layer down to pure NumPy array
+    full_nav_array = raw_df['nav'].to_numpy(dtype=np.float64)
+    total_len = len(full_nav_array)
 
-    # 3. STRIP PANDAS AWAY IMMEDIATELY AT THE BOUNDARY
-    # Extract only the primitive float array for math processing
-    nav_production_array = raw_df['nav'].to_numpy(dtype=np.float64)
+    # Chronological Boundary Split: 80% In-Sample (Train), 20% Out-of-Sample (Test)
+    split_idx = int(total_len * 0.80)
+    train_array = full_nav_array[:split_idx]
+    test_array = full_nav_array[split_idx:]
 
-    # 4. Execute the stateless engine
-    results = run_strategy_backtest(nav_production_array)
+    print(f"[✓] Data partitioned: {len(train_array)} days In-Sample, {len(test_array)} days Out-of-Sample.")
 
-    if results is None:
-        print("[X] Execution failed inside backend layers.")
+    # 1. Run optimization engine strictly on training history
+    best_fast, best_slow, best_mult = run_grid_search(train_array)
+
+    # 2. Run clean out-of-sample backtest with the optimal parameters found
+    print("[*] Evaluating selected parameters on unseen Out-of-Sample data...")
+    oos_results = run_strategy_backtest(test_array, fast_span=best_fast, slow_span=best_slow, momentum_mult=best_mult)
+
+    if oos_results is None:
+        print("[X] Walk-Forward validation failed.")
         return
 
-    # 5. Print the verified report
     print("\n" + "="*45)
-    print("      QUANTITATIVE PERFORMANCE REPORT (REAL DB DATA)")
+    print("    OUT-OF-SAMPLE VALIDATION REPORT (STEP 3)")
     print("="*45)
-    print(f"Total History Checked:    {len(nav_production_array)} trading days")
-    print(f"Trend Deviation (MAPE):   {results['MAPE']:.2f}%")
-    print(f"Total Strategy Return:    {results['Strategy_Ret']*100:.1f}%")
-    print(f"Benchmark Return:         {results['Benchmark_Ret']*100:.1f}%")
+    print(f"Test Horizon Length:      {len(test_array)} trading days")
+    print(f"Parameters Employed:      Fast={best_fast} | Slow={best_slow} | Mult={best_mult}")
     print("-" * 45)
-    print(f"Max Strategy Drawdown:    {results['Max_Drawdown']*100:.1f}%")
-    print(f"Annualized Sharpe Ratio:  {results['Sharpe_Ratio']:.2f}")
+    print(f"OOS Strategy Return:      {oos_results['Strategy_Ret']*100:.1f}%")
+    print(f"OOS Benchmark Return:     {oos_results['Benchmark_Ret']*100:.1f}%")
+    print(f"OOS Max Strategy DD:      {oos_results['Max_Drawdown']*100:.1f}%")
+    print(f"OOS Sharpe Ratio:         {oos_results['Sharpe_Ratio']:.2f}")
     print("="*45)
 
 if __name__ == "__main__":
