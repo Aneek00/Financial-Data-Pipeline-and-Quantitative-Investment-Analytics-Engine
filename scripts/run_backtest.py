@@ -1,48 +1,59 @@
+# scripts/run_backtest.py
+import sys
+import os
 import pandas as pd
 import numpy as np
+
+# Force Python to recognize the root folder
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from sqlalchemy import create_engine
+from src.config import db_config
 from src.models import run_strategy_backtest
-from juliacall import Main as jl
-
-# 1. Load your Julia file into the Python environment
-jl.seval('include("src/compute.jl")')
-
-def run_julia_backtest(df):
-    # 2. Extract the NAV column as a raw NumPy array (Float64)
-    # Julia reads NumPy arrays natively with zero-copy overhead!
-    nav_array = df['nav'].to_numpy(dtype=np.float64)
-
-    # 3. Call the Julia function
-    # Note: We access it via jl.FastCompute (the module name we created in Julia)
-    signals = jl.FastCompute.calculate_ema_signals(nav_array, 20, 50)
-
-    # 4. Slap the fast results back into your Pandas DataFrame
-    df['Strategy_Signal'] = signals
-
-    return df
 
 def main():
-    print("--- Running Standalone Production Backtest ---")
+    print("--- Running Production DB-Linked DOP Backtest ---")
 
-    # 1. Generate realistic "Bull Market" dummy data (just like your original code)
-    np.random.seed(42)
-    dates = pd.date_range(start='2021-01-01', periods=1200)
-    # 0.08% daily drift = strong bull market
-    nav_values = 100 * (1 + np.random.normal(0.0008, 0.01, 1200)).cumprod()
+    # 1. Connect to your actual database using your config properties
+    engine = create_engine(db_config.url)
 
-    dummy_fund_df = pd.DataFrame({
-        'date': dates,
-        'nav': nav_values,
-        'scheme_name': 'HDFC Flexi Cap'
-    })
+    # 2. Extract real historical data for an active scheme code
+    # We choose a single scheme code, sorting strictly by date chronologically
+    query = "SELECT date, nav FROM nav_data WHERE scheme_code = '100033' ORDER BY date ASC"
 
-    # 2. Run the engine (imported from our clean src/ directory)
-    results = run_strategy_backtest(dummy_fund_df)
+    try:
+        with engine.connect() as conn:
+            raw_df = pd.read_sql(query, conn)
+    except Exception as e:
+        print(f"[X] Database read failed: {e}")
+        print("[*] Falling back to a generalized table scan to grab the first valid scheme...")
+        fallback_query = "SELECT date, nav FROM nav_data WHERE scheme_code = (SELECT scheme_code FROM nav_data LIMIT 1) ORDER BY date ASC"
+        with engine.connect() as conn:
+            raw_df = pd.read_sql(fallback_query, conn)
 
-    # 3. Print the Report
+    if raw_df.empty or len(raw_df) < 60:
+        print(f"[X] Error: Extracted series contains insufficient data history ({len(raw_df)} rows found).")
+        return
+
+    print(f"[✓] Extracted {len(raw_df)} historical records from the database.")
+
+    # 3. STRIP PANDAS AWAY IMMEDIATELY AT THE BOUNDARY
+    # Extract only the primitive float array for math processing
+    nav_production_array = raw_df['nav'].to_numpy(dtype=np.float64)
+
+    # 4. Execute the stateless engine
+    results = run_strategy_backtest(nav_production_array)
+
+    if results is None:
+        print("[X] Execution failed inside backend layers.")
+        return
+
+    # 5. Print the verified report
     print("\n" + "="*45)
-    print("      QUANTITATIVE PERFORMANCE REPORT")
+    print("      QUANTITATIVE PERFORMANCE REPORT (REAL DB DATA)")
     print("="*45)
-    print(f"Directional Accuracy:     {results['Accuracy']*100:.1f}%")
+    print(f"Total History Checked:    {len(nav_production_array)} trading days")
+    print(f"Trend Deviation (MAPE):   {results['MAPE']:.2f}%")
     print(f"Total Strategy Return:    {results['Strategy_Ret']*100:.1f}%")
     print(f"Benchmark Return:         {results['Benchmark_Ret']*100:.1f}%")
     print("-" * 45)

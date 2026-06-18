@@ -9,7 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 import pandas as pd
 from src.config import db_config
 import logging
-from pandera import Check, Column, DataFrameSchema
+from pandera.pandas import Check, Column, DataFrameSchema
 from pandera.errors import SchemaError
 
 logger = logging.getLogger(__name__)
@@ -49,11 +49,8 @@ class DBLoader:
 
         try:
             with self.engine.begin() as conn:
+                # Only attempt to delete overlapping dates if we are appending
                 if if_exists == 'append' and not df.empty:
-                    unique_dates = df['date'].dt.strftime('%Y-%m-%d').unique()
-                    date_list_for_sql = ", ".join([f"'{d}'" for d in unique_dates])
-
-                    if if_exists == 'append' and not df.empty:
                     unique_dates = df['date'].dt.strftime('%Y-%m-%d').unique().tolist()
 
                     if unique_dates:
@@ -65,12 +62,14 @@ class DBLoader:
                         result = conn.execute(delete_sql, binds)
                         logger.info(f"Removed {result.rowcount} existing records for dates being loaded.")
 
+                # Proceed with inserting the new data
                 df.to_sql(
                     name=table_name, con=conn, if_exists=if_exists,
                     index=False, method='multi', chunksize=1000
                 )
                 logger.info(f"Successfully loaded {len(df)} records to table '{table_name}' with mode '{if_exists}'.")
                 return True
+
         except SQLAlchemyError as e:
             logger.error(f"DB Error during load to '{table_name}': {e}", exc_info=True)
             return False
