@@ -371,20 +371,7 @@ A bullish environment is identified when the Fast EMA exceeds the Slow EMA.
 
 The Exponential Moving Average is defined as:
 
-$$
-EMA_t
-=
-\left(
-V_t
-\times
-\frac{2}{s+1}
-\right)
-+
-EMA_{t-1}
-\left(
-1-\frac{2}{s+1}
-\right)
-$$
+$$EMA_t = \left( V_t \times \frac{2}{s+1} \right) + EMA_{t-1} \left( 1-\frac{2}{s+1} \right)$$
 
 Where:
 
@@ -433,14 +420,7 @@ Maximum Drawdown estimates the largest peak-to-trough decline experienced during
 
 It provides a realistic representation of downside exposure.
 
-$$
-MDD
-=
-\min
-\left(
-\frac{V_t-P_t}{P_t}
-\right)
-$$
+$$MDD = \min \left( \frac{V_t - P_t}{P_t} \right)$$
 
 Where:
 
@@ -457,13 +437,7 @@ The Sharpe Ratio evaluates the quality of returns after accounting for volatilit
 
 Returns are annualized using a 252-trading-day convention.
 
-$$
-Sharpe
-=
-\frac{R_p-R_f}{\sigma_p}
-\times
-\sqrt{252}
-$$
+$$Sharpe = \frac{R_p - R_f}{\sigma_p} \times \sqrt{252}$$
 
 Where:
 
@@ -487,14 +461,7 @@ This stage validates assumptions and generates features used throughout downstre
 
 Daily log returns are calculated to normalize compounding effects.
 
-$$
-r_t
-=
-\ln
-\left(
-\frac{NAV_t}{NAV_{t-1}}
-\right)
-$$
+$$r_t = \ln \left( \frac{NAV_t}{NAV_{t-1}} \right)$$
 
 Where:
 
@@ -514,12 +481,7 @@ Log returns offer several advantages:
 
 Daily volatility is transformed into annualized volatility using the trading-day convention.
 
-$$
-\sigma_{annual}
-=
-\sigma_{daily}
-\sqrt{252}
-$$
+$$\sigma_{annual} = \sigma_{daily} \sqrt{252}$$
 
 Annualization enables comparison across varying investment horizons.
 
@@ -531,12 +493,7 @@ Diversification decisions rely on pairwise return relationships.
 
 The system computes dynamic correlation matrices across candidate funds.
 
-$$
-\rho_{ij}
-=
-\frac{Cov(r_i,r_j)}
-{\sigma_i\sigma_j}
-$$
+$$\rho_{ij} = \frac{Cov(r_i, r_j)}{\sigma_i \sigma_j}$$
 
 Where:
 
@@ -694,11 +651,7 @@ Funds exhibiting excessive similarity to current holdings are automatically reje
 
 Threshold:
 
-$$
-\rho > 0.85
-\Rightarrow
-Reject
-$$
+$$\rho > 0.85 \Rightarrow \text{Reject}$$
 
 This constraint attempts to eliminate redundant beta exposure.
 
