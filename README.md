@@ -102,7 +102,9 @@ Evaluated over a 1200-day synthetic market environment incorporating transaction
 11. [Research Notebooks](#research-notebooks)
 12. [System Directory Structure](#system-directory-structure)
 13. [Reproducibility & Setup](#reproducibility--setup)
-14. [Disclaimer](#disclaimer)
+14. [Execution Pathways](#execution-pathways)
+15. [Future Improvements](#future-improvements)
+16. [Disclaimer](#disclaimer)
 
 ---
 
@@ -123,16 +125,16 @@ flowchart TD
     E --> F[Offline Quant Engine]
 
     F --> G[Risk Metrics Computation]
+    F --> H[Prophet & Holt-Winters Forecasts]
+    F --> I[GMM & Julia Strategy Backtesting]
 
-    G --> H[Prophet & Holt-Winters Forecasts]
+    G --> J[Brotli Compression]
+    H --> J
+    I --> J
 
-    H --> I[Brotli Compression]
+    J --> K[(Immutable Parquet Artifacts)]
 
-    I --> J[(Immutable Parquet Artifacts)]
-
-    J -->|Air-Gapped Deployment| K[Streamlit Frontend]
-
-    K --> L[User Inputs]
+    K -->|Air-Gapped Deployment| L[Streamlit Frontend]
 
     L --> M[Suitability Scoring]
 
@@ -141,7 +143,7 @@ flowchart TD
     N --> O(((Portfolio Recommendation)))
 
     style E fill:#f9f,stroke:#333,stroke-width:2px,color:#000
-    style J fill:#bbf,stroke:#333,stroke-width:2px,color:#000
+    style K fill:#bbf,stroke:#333,stroke-width:2px,color:#000
     style O fill:#bfb,stroke:#333,stroke-width:3px,color:#000
 ```
 
@@ -246,6 +248,12 @@ This layer provides:
 - connection pooling support,
 - scalable querying without excessive memory consumption.
 
+**Core Table: `nav_history`**
+| Column | Type | Constraints |
+|--------|------|-------------|
+| `date` | DATE | Primary Key |
+| `scheme_id` | INT | Primary Key, Indexed |
+| `nav` | FLOAT | `> 0`, Non-Null |
 ---
 
 ## 4. Analytical Engine
@@ -283,14 +291,24 @@ This separation minimizes deployment overhead while maintaining an interactive u
 ---
 | Component | Environment | Dependencies | Purpose |
 |------------|-------------|--------------|-----------|
-| `src/` | Local Batch Environment | `requirements-local.txt` | Core quantitative logic and analytical functions |
-| `scripts/` | Local Batch Environment | `requirements-local.txt` | ETL orchestration, forecasting, artifact generation, and backtesting |
+| `src/` | Local Batch Environment | `requirements_local.txt` | Core quantitative logic and analytical functions |
+| `scripts/` | Local Batch Environment | `requirements_local.txt` | ETL orchestration, forecasting, artifact generation, and backtesting |
 | `app/` | Cloud Frontend | `requirements.txt` | Lightweight Streamlit presentation layer |
 | `data/` | Cloud Consumption | N/A | Immutable compressed artifacts consumed by the UI |
+
 
 This separation ensures that computationally intensive routines never become bottlenecks for the deployed application.
 
 Machine learning training and historical simulations are executed offline, while the production frontend performs only lightweight inference and rendering.
+
+---
+
+# Execution Architecture & Environments
+
+To prevent heavy quantitative workloads from degrading frontend responsiveness, execution responsibilities are intentionally separated.
+
+- **Local Research & Backend Environment:** Executes all heavy machine learning (Prophet/Holt-Winters), Julia-accelerated GMM backtesting, Monte Carlo stochastic simulations, and deep statistical computations. Outputs are strictly saved as Brotli-compressed Parquet artifacts.
+- **Cloud Deployment Layer (Streamlit):** Entirely stateless and air-gapped. Consumes only the pre-computed Parquet outputs via cached functions and relies on `@st.fragment` routing to deliver sub-second interactivity for portfolio construction and visualizations without re-triggering heavy background mathematics.
 
 ---
 
@@ -376,24 +394,23 @@ Where:
 
 ---
 
-## 2. Machine Learning Conviction Filter
+## 2. Unsupervised GMM Conviction Filter & Fractional Allocation
 
-Even when the trend component generates a buy signal, the trade proceeds only if the forecasting model independently validates the opportunity.
+Instead of binary buy/sell flags, the system utilizes an Unsupervised Gaussian Mixture Model (GMM) to identify underlying market regimes.
+The GMM continuously processes asymmetric directional volatility (upside vs. downside semi-deviation) to extract soft, continuous probabilities of being in a "crash state".
 
-The Prophet forecast must exceed a predefined threshold relative to the current NAV.
-
-This mechanism acts as a circuit breaker during sideways or unstable market regimes.
+These probabilities are passed to a high-performance Julia backend (`FastCompute.jl`), which dynamically scales capital allocation:
+- **Structural Uptrend:** Floor allocation is capped to prevent severe cash drag (e.g., minimum 75% market exposure regardless of minor GMM spikes).
+- **Structural Downtrend/Neutral:** Full probability-based scaling allows exposure to drop to 0% to preserve capital.
 
 Conceptually:
-
-```
-EMA Buy Signal
-AND
-Forecast Confidence Threshold
+```text
+EMA Base Trend Signal
+×
+(1.0 - GMM Crash Probability)
 =
-Portfolio Entry
+Dynamic Fractional Portfolio Exposure
 ```
-
 ---
 
 # Risk & Performance Evaluation
@@ -818,25 +835,36 @@ mf-quant-pipeline/
 │   └── app.py
 │
 ├── scripts/
+│   ├── Back_testing.py
+│   ├── build_full_history_optimized.py
+│   ├── generate_backtests.py
+│   ├── generate_forecasts.py
+│   ├── run_backtest.py
 │   ├── run_local_pipeline.py
 │   ├── shrink_data.py
-│   ├── generate_forecasts.py
-│   └── generate_backtests.py
+│   ├── simulate_risk.py
+│   ├── update_daily.py
+│   └── varify_data.py
 │
 ├── src/
 │   ├── analysis.py
+│   ├── compute.jl
+│   ├── config.py
+│   ├── data_extractor.py
+│   ├── db_loader.py
+│   ├── features.py
 │   ├── models.py
 │   └── recommendations.py
 │
 ├── notebooks/
-│   ├── exploratory_analysis.ipynb
-│   ├── forecasting_experiments.ipynb
-│   └── backtesting_validation.ipynb
+│   ├── SIP-Analyser.ipynb
+│   ├── data_inspection.ipynb
+│   └── forecasting_final.ipynb
 │
 ├── data/
 │   └── production_artifacts/
 │
-├── requirements-local.txt
+├── requirements_local.txt
 ├── requirements.txt
 ├── .gitignore
 ├── .env.example
@@ -849,8 +877,9 @@ mf-quant-pipeline/
 
 ## Prerequisites
 
-- Python 3.8+
-- MySQL Server
+- Python 3.10+
+- Julia 1.9+ (Required for FastCompute backend)
+- MySQL Server 8.0+
 - Git
 
 ---
@@ -858,9 +887,9 @@ mf-quant-pipeline/
 ## Clone Repository
 
 ```bash
-git clone https://github.com/your-username/mf-quant-pipeline.git
+git clone https://github.com/aneek00/financial-data-pipeline-and-quantitative-investment-analytics-engine.git
 
-cd mf-quant-pipeline
+cd financial-data-pipeline-and-quantitative-investment-analytics-engine
 ```
 
 ---
@@ -875,9 +904,17 @@ Required for:
 - artifact generation.
 
 ```bash
-pip install -r requirements-local.txt
+pip install -r requirements_local.txt
 ```
 
+---
+### Initialize Julia Backend
+The quantitative engine requires the Julia bridge to be compiled on the first run.
+Open a Python shell and initialize the Julia environment:
+```python
+import julia
+julia.install()
+```
 ---
 
 ## Environment Configuration
@@ -928,6 +965,14 @@ This workflow performs:
 - delta ingestion,
 - database synchronization,
 - artifact refresh.
+
+---
+
+To automate this, add the following cron job to execute at 11:30 PM IST daily (after AMFI updates). 
+*(Note: You must replace the generic `/path/to/` placeholders with your server's absolute paths to both the Python binary and the project directory).*
+```bash
+30 23 * * * /path/to/venv/bin/python /path/to/mf-quant-pipeline/scripts/update_daily.py >> /var/log/mf_pipeline.log 2>&1
+```
 
 ---
 
@@ -992,7 +1037,3 @@ This project represents an effort to bridge the disciplines of:
 It emphasizes an often-overlooked principle in portfolio projects:
 
 > Building a model is only one part of the problem. Designing systems that validate data, survive deployment constraints, remain reproducible, and deliver usable outputs is equally important.
-
-# Execution Architecture & Environments
-
-To prevent heavy quantitative workloads from degrading frontend responsiveness, execution responsibilities are intentionally separated.
