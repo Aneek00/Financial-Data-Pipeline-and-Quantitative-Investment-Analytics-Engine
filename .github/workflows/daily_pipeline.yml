@@ -1,7 +1,5 @@
 name: AMFI Daily Extraction Pipeline
 
-name: AMFI Daily Extraction Pipeline
-
 on:
   push:
     branches:
@@ -11,11 +9,8 @@ on:
   workflow_dispatch:
 
 jobs:
-# ... (keep the rest of your file exactly the same)
-jobs:
   extract-and-store:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -36,4 +31,4 @@ jobs:
         with:
           name: daily-nav-data
           path: '*.parquet'
-          retention-days: 90 # Holds the files in the cloud for 3 months
+          retention-days: 90
