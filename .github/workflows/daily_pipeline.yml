@@ -1,11 +1,17 @@
 name: AMFI Daily Extraction Pipeline
 
-on:
-  schedule:
-    # Executes at 18:30 UTC daily (Midnight IST), ensuring AMFI has published the day's data
-    - cron: '30 18 * * *'
-  workflow_dispatch: # Allows manual triggering from the GitHub UI for testing
+name: AMFI Daily Extraction Pipeline
 
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '30 18 * * *'
+  workflow_dispatch:
+
+jobs:
+# ... (keep the rest of your file exactly the same)
 jobs:
   extract-and-store:
     runs-on: ubuntu-latest
